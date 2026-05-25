@@ -1,54 +1,97 @@
+import getpass
+import json
+import re
+import subprocess
+from pathlib import Path
+
 import requests
-from datetime import datetime, timezone, timedelta
 
 _BASE = "https://api.anthropic.com"
-_COMMON_HEADERS = {
-    "anthropic-version": "2023-06-01",
-    "User-Agent": "claude-usage-menu/1.0",
-}
+_KEYCHAIN_SERVICE = "Claude Code-credentials"
+_CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 
 
-def _headers(key: str) -> dict:
-    return {**_COMMON_HEADERS, "x-api-key": key}
+def _extract_token(blob: str) -> str | None:
+    blob = blob.strip()
+    try:
+        data = json.loads(blob)
+        if isinstance(data, dict):
+            if isinstance(data.get("accessToken"), str):
+                return data["accessToken"]
+            for v in data.values():
+                if isinstance(v, dict) and isinstance(v.get("accessToken"), str):
+                    return v["accessToken"]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    m = re.search(r'"accessToken"\s*:\s*"([^"]+)"', blob)
+    return m.group(1) if m else None
 
 
-def _paginate(url: str, params: dict, key: str) -> list:
-    rows = []
-    while True:
-        r = requests.get(url, params=params, headers=_headers(key), timeout=15)
-        r.raise_for_status()
-        body = r.json()
-        rows.extend(body.get("data", []))
-        if not body.get("has_more"):
-            break
-        params = {**params, "page": body["next_page"]}
-    return rows
+def read_oauth_token() -> str | None:
+    """Read Claude Code's OAuth token from the macOS Keychain."""
+    try:
+        out = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", _KEYCHAIN_SERVICE, "-a", getpass.getuser(), "-w"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        return _extract_token(out.stdout)
+    except Exception:
+        pass
+    try:
+        return _extract_token(_CREDENTIALS_PATH.read_text())
+    except Exception:
+        return None
 
 
-def fetch_cost_report(key: str, days: int = 31) -> list:
-    """Daily cost buckets for the last `days` days."""
-    now = datetime.now(timezone.utc)
-    start = (now - timedelta(days=days)).strftime("%Y-%m-%dT00:00:00Z")
-    end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    return _paginate(
-        f"{_BASE}/v1/organizations/cost_report",
-        {"starting_at": start, "ending_at": end, "bucket_width": "1d"},
-        key,
-    )
+def fetch_rate_limits(oauth_token: str) -> dict:
+    """Send a 1-token message and parse the rate-limit response headers."""
+    print("[api] POST /v1/messages (rate limits)", flush=True)
+    try:
+        resp = requests.post(
+            f"{_BASE}/v1/messages",
+            headers={
+                "anthropic-version": "2023-06-01",
+                "anthropic-beta": "oauth-2025-04-20",
+                "Authorization": f"Bearer {oauth_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "claude-usage-menu/1.0",
+            },
+            json={
+                "model": "claude-haiku-4-5-20251001",
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+            timeout=15,
+        )
+        print(f"[api] status={resp.status_code}", flush=True)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[api] ERROR: {e}", flush=True)
+        raise
 
+    h = resp.headers
+    rl_headers = {k: v for k, v in h.items() if "ratelimit" in k.lower()}
+    print(f"[api] rate-limit headers: {rl_headers}", flush=True)
 
-def fetch_usage_today(key: str) -> list:
-    """Today's token usage grouped by model (UTC day)."""
-    now = datetime.now(timezone.utc)
-    start = now.strftime("%Y-%m-%dT00:00:00Z")
-    end = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    return _paginate(
-        f"{_BASE}/v1/organizations/usage_report/messages",
-        {
-            "starting_at": start,
-            "ending_at": end,
-            "bucket_width": "1d",
-            "group_by[]": "model",
-        },
-        key,
-    )
+    def pct(key: str) -> float:
+        try:
+            return float(h.get(key, 0)) * 100
+        except (ValueError, TypeError):
+            return 0.0
+
+    def ts(key: str) -> float:
+        try:
+            return float(h.get(key, 0))
+        except (ValueError, TypeError):
+            return 0.0
+
+    result = {
+        "5h_pct":      pct("anthropic-ratelimit-unified-5h-utilization"),
+        "5h_reset_ts": ts("anthropic-ratelimit-unified-5h-reset"),
+        "5h_status":   h.get("anthropic-ratelimit-unified-5h-status", ""),
+        "7d_pct":      pct("anthropic-ratelimit-unified-7d-utilization"),
+        "7d_reset_ts": ts("anthropic-ratelimit-unified-7d-reset"),
+    }
+    print(f"[api] parsed: {result}", flush=True)
+    return result
