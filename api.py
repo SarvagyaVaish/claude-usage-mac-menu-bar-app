@@ -44,27 +44,38 @@ def read_oauth_token() -> str | None:
         return None
 
 
+def _post_messages(oauth_token: str):
+    return requests.post(
+        f"{_BASE}/v1/messages",
+        headers={
+            "anthropic-version": "2023-06-01",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Authorization": f"Bearer {oauth_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "claude-usage-menu/1.0",
+        },
+        json={
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "hi"}],
+        },
+        timeout=15,
+    )
+
+
 def fetch_rate_limits(oauth_token: str) -> dict:
     """Send a 1-token message and parse the rate-limit response headers."""
     print("[api] POST /v1/messages (rate limits)", flush=True)
     try:
-        resp = requests.post(
-            f"{_BASE}/v1/messages",
-            headers={
-                "anthropic-version": "2023-06-01",
-                "anthropic-beta": "oauth-2025-04-20",
-                "Authorization": f"Bearer {oauth_token}",
-                "Content-Type": "application/json",
-                "User-Agent": "claude-usage-menu/1.0",
-            },
-            json={
-                "model": "claude-haiku-4-5-20251001",
-                "max_tokens": 1,
-                "messages": [{"role": "user", "content": "hi"}],
-            },
-            timeout=15,
-        )
+        resp = _post_messages(oauth_token)
         print(f"[api] status={resp.status_code}", flush=True)
+        if resp.status_code == 401:
+            # Claude Code may have rotated the token — re-read and retry once
+            print("[api] 401 on first attempt, re-reading token and retrying", flush=True)
+            fresh = read_oauth_token()
+            if fresh and fresh != oauth_token:
+                resp = _post_messages(fresh)
+                print(f"[api] retry status={resp.status_code}", flush=True)
         resp.raise_for_status()
     except Exception as e:
         print(f"[api] ERROR: {e}", flush=True)
