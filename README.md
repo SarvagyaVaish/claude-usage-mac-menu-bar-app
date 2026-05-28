@@ -39,22 +39,29 @@ venv/bin/python3 app.py
 
 The app will appear in your menu bar immediately.
 
-## Build a standalone .app
+## Build and install
 
-If you want a double-clickable app that doesn't require Python or the venv:
+Run the install script to build, install to `/Applications/`, and launch the app:
 
 ```bash
-venv/bin/pip install py2app
-venv/bin/python setup.py py2app
+./install.sh
 ```
 
-The built app is at `dist/ClaudeUsage.app`. Drag it to `/Applications/`.
+This builds a standalone `.app` with py2app, copies it to `/Applications/ClaudeUsage.app`, and starts it in the background with logs redirected to `~/Library/Logs/ClaudeUsage.log`.
 
 **First launch:** macOS will block it because it isn't notarized. Right-click → Open to bypass, or run:
 
 ```bash
-xattr -cr dist/ClaudeUsage.app
+xattr -cr /Applications/ClaudeUsage.app
 ```
+
+## Logs
+
+```bash
+./logs.sh
+```
+
+Tails `~/Library/Logs/ClaudeUsage.log` live. Useful for diagnosing token or API errors.
 
 ## Auto-start on login
 
