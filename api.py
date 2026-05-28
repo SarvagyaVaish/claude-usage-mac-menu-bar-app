@@ -70,12 +70,24 @@ def fetch_rate_limits(oauth_token: str) -> dict:
         resp = _post_messages(oauth_token)
         print(f"[api] status={resp.status_code}", flush=True)
         if resp.status_code == 401:
-            # Claude Code may have rotated the token — re-read and retry once
-            print("[api] 401 on first attempt, re-reading token and retrying", flush=True)
+            # Token may be stale — try to refresh via Claude Code CLI, then retry
+            print("[api] 401 on first attempt, attempting token refresh via claude CLI", flush=True)
+            try:
+                subprocess.run(
+                    ["claude", "--version"],
+                    capture_output=True, text=True, timeout=15,
+                )
+            except Exception:
+                pass
             fresh = read_oauth_token()
-            if fresh and fresh != oauth_token:
+            if fresh:
                 resp = _post_messages(fresh)
                 print(f"[api] retry status={resp.status_code}", flush=True)
+        if resp.status_code == 401:
+            raise requests.HTTPError(
+                "401 Unauthorized — OAuth token expired. Open Claude Code to refresh it.",
+                response=resp,
+            )
         resp.raise_for_status()
     except Exception as e:
         print(f"[api] ERROR: {e}", flush=True)

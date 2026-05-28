@@ -20,6 +20,7 @@ rm -rf /Applications/ClaudeUsage.app
 cp -r dist/ClaudeUsage.app /Applications/ClaudeUsage.app
 
 echo "Launching..."
-open /Applications/ClaudeUsage.app
+LOG="$HOME/Library/Logs/ClaudeUsage.log"
+/Applications/ClaudeUsage.app/Contents/MacOS/ClaudeUsage >> "$LOG" 2>&1 &
 
 echo "Done."
