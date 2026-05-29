@@ -216,12 +216,23 @@ class ClaudeUsageApp(rumps.App):
                 return
             self._fetching = True
         try:
-            print("[fetch] reading oauth token", flush=True)
-            oauth = api.read_oauth_token()
-            if not oauth:
+            import time
+            print("[fetch] reading oauth credentials", flush=True)
+            creds = api.read_credentials()
+            if not creds:
                 print("[fetch] ERROR: no oauth token found", flush=True)
                 self._pending_error = "Claude Code not found — install it first"
                 return
+            # Proactively refresh if the token expires within the next 5 minutes
+            expires_at = creds.get("expiresAt", 0)
+            if expires_at and time.time() * 1000 > expires_at - 5 * 60 * 1000:
+                print("[fetch] token expiring soon, refreshing proactively", flush=True)
+                refresh_tok = creds.get("refreshToken")
+                if refresh_tok:
+                    fresh = api.refresh_oauth_token(refresh_tok)
+                    if fresh:
+                        creds["accessToken"] = fresh
+            oauth = creds["accessToken"]
             print(f"[fetch] got token ({oauth[:12]}…)", flush=True)
             limits = api.fetch_rate_limits(oauth)
             print(f"[fetch] success: {limits}", flush=True)
