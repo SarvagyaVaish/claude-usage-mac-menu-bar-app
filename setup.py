@@ -12,7 +12,7 @@ OPTIONS = {
         'CFBundleShortVersionString': '1.0.0',
         'NSHighResolutionCapable': True,
     },
-    'packages': ['rumps', 'requests'],
+    'packages': ['rumps', 'requests', 'certifi'],
 }
 
 setup(

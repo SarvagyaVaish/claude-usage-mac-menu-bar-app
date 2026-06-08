@@ -137,6 +137,7 @@ class ClaudeUsageApp(rumps.App):
 
         self._pending       = None
         self._pending_error = None
+        self._no_session    = False
         self._fetching      = False
         self._fetch_lock    = threading.Lock()
 
@@ -171,7 +172,14 @@ class ClaudeUsageApp(rumps.App):
             traceback.print_exc()
 
     def _apply_pending_inner(self):
-        if self._pending_error is not None:
+        if self._no_session:
+            self._title_line1 = "···"
+            self._5h_bar_item.title  = "Status will appear once Claude Code starts"
+            self._5h_reset_item.title = ""
+            self._7d_bar_item.title  = ""
+            self._7d_reset_item.title = ""
+
+        elif self._pending_error is not None:
             err, self._pending_error = self._pending_error, None
             self._title_line1 = "err"
             self._5h_bar_item.title = f"Error: {err[:60]}"
@@ -193,18 +201,19 @@ class ClaudeUsageApp(rumps.App):
             self._7d_bar_item.title  = f"7d window:   {_pct_bar(limits['7d_pct'])}"
             self._updated_item.title = f"Updated: {datetime.now().strftime('%-I:%M %p')}"
 
-        # Live countdowns — updated every tick
-        if self._5h_reset_ts:
-            self._5h_reset_item.title = f"Resets in:   {_fmt_reset(self._5h_reset_ts)}"
-        if self._7d_reset_ts:
-            self._7d_reset_item.title = f"Resets in:   {_fmt_reset(self._7d_reset_ts)}"
+        # Live countdowns — updated every tick (skip when no active session)
+        if not self._no_session:
+            if self._5h_reset_ts:
+                self._5h_reset_item.title = f"Resets in:   {_fmt_reset(self._5h_reset_ts)}"
+            if self._7d_reset_ts:
+                self._7d_reset_item.title = f"Resets in:   {_fmt_reset(self._7d_reset_ts)}"
 
         # Two-line menu bar title — updated every tick
         nsapp = getattr(self, "_nsapp", None)
         _set_status_title(
             getattr(nsapp, "nsstatusitem", None),
             self._title_line1,
-            _fmt_countdown(self._5h_reset_ts),
+            _fmt_countdown(self._5h_reset_ts) if not self._no_session else "",
         )
 
     # ── background fetch ──────────────────────────────────────────────────────
@@ -216,32 +225,26 @@ class ClaudeUsageApp(rumps.App):
                 return
             self._fetching = True
         try:
-            import time
             print("[fetch] reading oauth credentials", flush=True)
             creds = api.read_credentials()
             if not creds:
                 print("[fetch] ERROR: no oauth token found", flush=True)
-                self._pending_error = "Claude Code not found — install it first"
+                self._no_session = True
                 return
-            # Proactively refresh if the token expires within the next 5 minutes
-            expires_at = creds.get("expiresAt", 0)
-            if expires_at and time.time() * 1000 > expires_at - 5 * 60 * 1000:
-                print("[fetch] token expiring soon, refreshing proactively", flush=True)
-                refresh_tok = creds.get("refreshToken")
-                if refresh_tok:
-                    fresh = api.refresh_oauth_token(refresh_tok)
-                    if fresh:
-                        creds["accessToken"] = fresh
             oauth = creds["accessToken"]
             print(f"[fetch] got token ({oauth[:12]}…)", flush=True)
             limits = api.fetch_rate_limits(oauth)
             print(f"[fetch] success: {limits}", flush=True)
+            self._no_session = False
             self._pending = limits
         except Exception as e:
             import traceback
             print(f"[fetch] ERROR: {e}", flush=True)
             traceback.print_exc()
-            self._pending_error = str(e)
+            if "401" in str(e):
+                self._no_session = True
+            else:
+                self._pending_error = str(e)
         finally:
             with self._fetch_lock:
                 self._fetching = False
