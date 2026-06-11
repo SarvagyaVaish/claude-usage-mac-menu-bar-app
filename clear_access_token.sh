@@ -10,11 +10,6 @@ USERNAME=$(whoami)
 
 echo "Clearing access token (preserving refresh token)..."
 
-_corrupt_access_token() {
-    # Replace accessToken value with an invalid string
-    jq '.accessToken = "expired"' "$1"
-}
-
 # ── Keychain ──────────────────────────────────────────────────────────────────
 echo "  [keychain] security find-generic-password -s \"$KEYCHAIN_SERVICE\" -a \"$USERNAME\""
 if security find-generic-password -s "$KEYCHAIN_SERVICE" -a "$USERNAME" &>/dev/null; then
@@ -34,7 +29,7 @@ fi
 
 # ── Credentials file ──────────────────────────────────────────────────────────
 if [ -f "$CREDENTIALS_FILE" ]; then
-    UPDATED=$(jq 'if .accessToken then .accessToken = "expired"
+    UPDATED=$(jq -c 'if .accessToken then .accessToken = "expired"
                   elif (to_entries | map(select(.value.accessToken)) | length) > 0
                   then with_entries(if .value.accessToken then .value.accessToken = "expired" else . end)
                   else . end' "$CREDENTIALS_FILE")

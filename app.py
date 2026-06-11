@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -70,6 +71,12 @@ def _set_status_title(status_item, line1: str, line2: str):
             is_dark = (best == AppKit.NSAppearanceNameDarkAqua)
         except Exception:
             is_dark = False
+
+        # Skip the redraw when nothing visible has changed (timer fires every 1s)
+        cache_key = (line1, line2, is_dark)
+        if getattr(_set_status_title, "_last_key", None) == cache_key:
+            return
+        _set_status_title._last_key = cache_key
 
         if is_dark:
             color1 = AppKit.NSColor.whiteColor()
@@ -229,10 +236,11 @@ class ClaudeUsageApp(rumps.App):
         self._reauth_item.title = "Refreshing Auth…"
         self._title_line1 = "···"
         try:
-            claude_bin = os.path.expanduser("~/.local/bin/claude")
             env = os.environ.copy()
             env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:" + env.get("PATH", "")
-            print("[reauth] running: claude -p '2+2'", flush=True)
+            claude_bin = shutil.which("claude", path=env["PATH"]) \
+                or os.path.expanduser("~/.local/bin/claude")
+            print(f"[reauth] running: {claude_bin} -p '2+2'", flush=True)
             result = subprocess.run(
                 [claude_bin, "-p", "2+2"],
                 capture_output=True, text=True, encoding="utf-8", timeout=60, env=env,
@@ -249,9 +257,10 @@ class ClaudeUsageApp(rumps.App):
                     # No refresh token — need full interactive login
                     print("[reauth] opening Terminal for interactive login", flush=True)
                     self._reauth_item.title = "Waiting for login…"
+                    as_path = claude_bin.replace("\\", "\\\\").replace('"', '\\"')
                     script = (
                         f'tell application "Terminal"\n'
-                        f'  set w to do script "{claude_bin}"\n'
+                        f'  set w to do script "{as_path}"\n'
                         f'  activate\n'
                         f'  repeat\n'
                         f'    delay 2\n'
@@ -265,16 +274,24 @@ class ClaudeUsageApp(rumps.App):
             print(f"[reauth] ERROR: {e}", flush=True)
         finally:
             self._reauth_item.title = "Refresh Auth"
-        self._fetch()
+        # force=True so a concurrent auto-refresh (using the old token) can't
+        # cause this post-reauth fetch to be skipped.
+        self._fetch(force=True)
 
     # ── background fetch ──────────────────────────────────────────────────────
 
-    def _fetch(self):
-        with self._fetch_lock:
-            if self._fetching:
-                print("[fetch] already in progress, skipping", flush=True)
-                return
-            self._fetching = True
+    def _fetch(self, force=False):
+        # Acquire the "fetching" slot. force=True waits for any in-progress
+        # fetch to finish (rather than skipping) so it always runs fresh.
+        while True:
+            with self._fetch_lock:
+                if not self._fetching:
+                    self._fetching = True
+                    break
+                if not force:
+                    print("[fetch] already in progress, skipping", flush=True)
+                    return
+            time.sleep(0.2)
         try:
             print("[fetch] reading oauth credentials", flush=True)
             creds = api.read_credentials()
@@ -283,7 +300,7 @@ class ClaudeUsageApp(rumps.App):
                 self._no_session = True
                 return
             oauth = creds["accessToken"]
-            print(f"[fetch] got token ({oauth[:12]}…)", flush=True)
+            print("[fetch] got access token", flush=True)
             limits = api.fetch_rate_limits(oauth)
             print(f"[fetch] success: {limits}", flush=True)
             self._no_session = False
