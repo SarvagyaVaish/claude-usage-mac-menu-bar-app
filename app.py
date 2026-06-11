@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -117,8 +119,9 @@ class ClaudeUsageApp(rumps.App):
         self._5h_reset_item  = rumps.MenuItem("Resets in:  —")
         self._7d_bar_item    = rumps.MenuItem("7d window:  —")
         self._7d_reset_item  = rumps.MenuItem("Resets in:  —")
-        self._updated_item   = rumps.MenuItem("Updated: never")
-        self._refresh_item   = rumps.MenuItem("Refresh", callback=self._on_refresh)
+        self._updated_item      = rumps.MenuItem("Updated: never")
+        self._refresh_item      = rumps.MenuItem("Refresh", callback=self._on_refresh)
+        self._reauth_item       = rumps.MenuItem("Refresh Auth", callback=self._on_reauth)
 
         self.menu = [
             self._5h_bar_item,
@@ -130,6 +133,7 @@ class ClaudeUsageApp(rumps.App):
             self._updated_item,
             None,
             self._refresh_item,
+            self._reauth_item,
         ]
 
         # Prevent AppKit from re-disabling items that have no action at menu-open time
@@ -157,6 +161,9 @@ class ClaudeUsageApp(rumps.App):
     def _on_refresh(self, _):
         self._title_line1 = "···"
         threading.Thread(target=self._fetch, daemon=True).start()
+
+    def _on_reauth(self, _):
+        threading.Thread(target=self._reauth_and_refresh, daemon=True).start()
 
     def _auto_refresh(self, _):
         threading.Thread(target=self._fetch, daemon=True).start()
@@ -215,6 +222,50 @@ class ClaudeUsageApp(rumps.App):
             self._title_line1,
             _fmt_countdown(self._5h_reset_ts) if not self._no_session else "",
         )
+
+    # ── reauth ────────────────────────────────────────────────────────────────
+
+    def _reauth_and_refresh(self):
+        self._reauth_item.title = "Refreshing Auth…"
+        self._title_line1 = "···"
+        try:
+            claude_bin = os.path.expanduser("~/.local/bin/claude")
+            env = os.environ.copy()
+            env["PATH"] = "/usr/local/bin:/opt/homebrew/bin:" + env.get("PATH", "")
+            print("[reauth] running: claude -p '2+2'", flush=True)
+            result = subprocess.run(
+                [claude_bin, "-p", "2+2"],
+                capture_output=True, text=True, encoding="utf-8", timeout=60, env=env,
+            )
+            print(f"[reauth] exit={result.returncode} stdout={result.stdout[:80]!r}", flush=True)
+            if result.returncode != 0:
+                print(f"[reauth] stderr={result.stderr[:200]!r}", flush=True)
+
+            if result.returncode != 0 and "not logged in" in (result.stdout + result.stderr).lower():
+                creds = api.read_credentials()
+                has_refresh_token = bool(creds and creds.get("refreshToken"))
+                print(f"[reauth] has_refresh_token={has_refresh_token}", flush=True)
+                if not has_refresh_token:
+                    # No refresh token — need full interactive login
+                    print("[reauth] opening Terminal for interactive login", flush=True)
+                    self._reauth_item.title = "Waiting for login…"
+                    script = (
+                        f'tell application "Terminal"\n'
+                        f'  set w to do script "{claude_bin}"\n'
+                        f'  activate\n'
+                        f'  repeat\n'
+                        f'    delay 2\n'
+                        f'    if not busy of w then exit repeat\n'
+                        f'  end repeat\n'
+                        f'end tell'
+                    )
+                    subprocess.run(["osascript", "-e", script], timeout=300)
+                    print("[reauth] Terminal closed", flush=True)
+        except Exception as e:
+            print(f"[reauth] ERROR: {e}", flush=True)
+        finally:
+            self._reauth_item.title = "Refresh Auth"
+        self._fetch()
 
     # ── background fetch ──────────────────────────────────────────────────────
 

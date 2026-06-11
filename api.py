@@ -30,12 +30,10 @@ def _parse_credentials(blob: str) -> dict | None:
 def _read_raw_keychain() -> tuple[str, str] | None:
     """Returns (username, raw_blob) from keychain, or None."""
     username = getpass.getuser()
+    cmd = ["security", "find-generic-password", "-s", _KEYCHAIN_SERVICE, "-a", username, "-w"]
+    print(f"[keychain] {' '.join(cmd)}", flush=True)
     try:
-        out = subprocess.run(
-            ["security", "find-generic-password",
-             "-s", _KEYCHAIN_SERVICE, "-a", username, "-w"],
-            check=True, capture_output=True, text=True, timeout=10,
-        )
+        out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=10)
         return username, out.stdout
     except Exception:
         return None
