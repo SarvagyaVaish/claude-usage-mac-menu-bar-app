@@ -2,6 +2,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -12,6 +13,45 @@ import rumps
 import api
 
 REFRESH_INTERVAL = 5 * 60  # seconds
+
+LOG_PATH     = os.path.expanduser("~/Library/Logs/ClaudeUsage.log")
+LOG_MAX_SIZE = 5 * 1024 * 1024  # rotate past 5 MB
+
+
+def _setup_logging():
+    """Send print() output to the log file when we have nowhere else to write.
+
+    Launched from a terminal, stdout is a tty and we leave it alone. Launched
+    with a shell redirect (install.sh), stdout is already a regular file and we
+    leave that alone too. Launched from Finder, the Dock, or a login item,
+    stdout is /dev/null -- that is the case this exists for, and the one that
+    used to silently lose every log line.
+    """
+    try:
+        fd = sys.stdout.fileno()
+        if os.stat(os.devnull).st_ino != os.fstat(fd).st_ino:
+            return  # a tty, a shell redirect, or a pipe -- all deliberate
+    except Exception:
+        pass  # no usable stdout at all -- open our own below
+
+    try:
+        if os.path.getsize(LOG_PATH) > LOG_MAX_SIZE:
+            os.replace(LOG_PATH, LOG_PATH + ".1")
+    except OSError:
+        pass  # missing or unreadable -- open() below handles it
+
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        # utf-8 explicitly: launched from Finder there is no LANG, so the
+        # default encoding is ascii and the bar/em-dash glyphs would raise.
+        f = open(LOG_PATH, "a", buffering=1,  # line-buffered, so tail -f is live
+                 encoding="utf-8", errors="replace")
+        sys.stdout = f
+        sys.stderr = f
+        print(f"[log] --- started {datetime.now():%Y-%m-%d %H:%M:%S} "
+              f"(pid {os.getpid()}) ---", flush=True)
+    except OSError:
+        pass  # never let logging setup stop the app from launching
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -327,4 +367,5 @@ class ClaudeUsageApp(rumps.App):
 
 
 if __name__ == "__main__":
+    _setup_logging()
     ClaudeUsageApp().run()
