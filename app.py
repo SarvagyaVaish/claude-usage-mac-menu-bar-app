@@ -34,6 +34,14 @@ def _fmt_reset(unix_ts: float) -> str:
     return f"{mins}m  ({dt.strftime('%-I:%M %p')})"
 
 
+def _elapsed_pct(unix_ts: float, window_secs: float) -> str:
+    """'42% elapsed' for a window ending at unix_ts."""
+    if not unix_ts:
+        return ""
+    elapsed = 1 - (unix_ts - time.time()) / window_secs
+    return f"  ·  {max(0, min(100, elapsed * 100)):.0f}% elapsed"
+
+
 def _pct_bar(pct: float) -> str:
     """'████░░░░░░  72%'"""
     filled = int(round(pct / 10))
@@ -220,7 +228,7 @@ class ClaudeUsageApp(rumps.App):
             if self._5h_reset_ts:
                 self._5h_reset_item.title = f"Resets in:   {_fmt_reset(self._5h_reset_ts)}"
             if self._7d_reset_ts:
-                self._7d_reset_item.title = f"Resets in:   {_fmt_reset(self._7d_reset_ts)}"
+                self._7d_reset_item.title = f"Resets in:   {_fmt_reset(self._7d_reset_ts)}{_elapsed_pct(self._7d_reset_ts, 7 * 86400)}"
 
         # Two-line menu bar title — updated every tick
         nsapp = getattr(self, "_nsapp", None)
